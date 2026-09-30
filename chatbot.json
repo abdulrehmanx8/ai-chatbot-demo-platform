@@ -1,0 +1,281 @@
+{
+  "name": "chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatbot",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1120,
+        -128
+      ],
+      "id": "cbc8f70a-e0a6-4f3b-8201-2750f563afce",
+      "name": "Webhook",
+      "webhookId": "ca270322-74eb-493c-9ded-74d00ff33bef"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -240,
+        304
+      ],
+      "id": "7c8d623f-e6dc-409d-8d8d-475c229b2875",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aW7bdezkk57sGxyj",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"reply\": \"{{ $('Basic LLM Chain').item.json.text }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        528,
+        32
+      ],
+      "id": "83a0e655-8338-4544-8510-579324c3d13c",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select content, metadata->'metadata'->>'type' as type\nfrom documents\nwhere metadata->'metadata'->>'lead_id' = '{{ $json.body.lead_id }}'\norder by \n  case metadata->'metadata'->>'type'\n    when 'summary' then 1\n    when 'basic_info' then 2\n    else 3\n  end;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -864,
+        -96
+      ],
+      "id": "e00381f4-9153-4b0b-82d4-3747b48e26f7",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "ziRrWRlzoqgzfMd4",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst businessInfo = rows.map(r => r.content).join('\\n\\n');\n\nconst systemPrompt = `You are a friendly virtual receptionist for this local home services business. Your job is to answer questions briefly and book an appointment — not to explain everything about the business.\n\nBUSINESS INFORMATION:\n${businessInfo}\n\nHow to talk:\n- Keep every reply short — 1 to 2 sentences MAX. Never explain what the business does unless the customer directly asks \"what do you do\" or similar.\n- When the customer just says something like \"hi,\" \"hello,\" or opens the conversation with no specific question: reply with a brief greeting and ONE simple question to find out what they need. Do NOT describe any services, do NOT mention landscape lighting, safety systems, or anything else — just greet and ask what they're looking for.\n  Example of a correct opening reply: \"Hi! What can I help you with today?\" or \"Hey there — are you looking into lighting for your home or a business?\"\n  Example of a WRONG opening reply: anything that lists or describes services before the customer has asked about anything.\n- Answer ONLY what the customer actually asked. Do not add extra details, extra services, or extra info they didn't ask for.\n- Sound like a real person texting back, not a brochure.\n- Only use facts from the business information above. Never invent hours, prices, service areas, or anything not listed above. If something isn't listed, say you're not sure and offer to have someone confirm.\n- Never invent a phone number, email, or address.\n\nYour goal in every conversation:\n- Move toward booking an appointment. Once the customer shows interest in a service (asks about it, describes a need, or says something like \"yes\" or \"sounds good\"), don't keep explaining — ask if they'd like to book a time to get a quote or have someone come take a look.\n- To \"book,\" collect their name and phone number, one at a time, not both in the same message. Example: ask for name first, then once given, ask for phone number.\n- Once you have both name and phone, confirm briefly that someone from the business will reach out to them, and thank them. This is a demo booking — you don't need to actually schedule a real time or date.\n- Do not ask for name/phone right at the start of the conversation. Only start collecting it once the customer has shown real interest in booking or getting a quote.\n\nPricing:\n- Only mention pricing if explicitly asked, or if it's explicitly listed above. Never quote a number that isn't stated above.\n\nReminder: your last reply must be 1-2 sentences. If the customer just said hello or a greeting, do not mention any services — only greet them and ask what they need.\n\nDo not mention that you are an AI, a language model, or that your info comes from \"scraped data,\" \"a database,\" or \"search results.\" Speak as if you naturally work for and represent this business.`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userMessage: $('Webhook').first().json.body.message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        -80
+      ],
+      "id": "02508aab-802f-4772-baf9-ffb801c77a68",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Code in JavaScript').item.json.userMessage }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "={{ $('Code in JavaScript').item.json.systemPrompt }}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        64,
+        -16
+      ],
+      "id": "4ca9d865-42e8-4a13-9ba5-a7adc6bff5a5",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select role, content \nfrom conversations\nwhere session_id = '{{ $('Webhook').first().json.body.session_id }}'\norder by created_at asc;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -656,
+        -64
+      ],
+      "id": "dda788d9-0d7d-4cc2-b9f9-8db83bb575a1",
+      "name": "Fetch history",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "ziRrWRlzoqgzfMd4",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into conversations (session_id, lead_id, role, content)\nvalues (\n  '{{ $('Webhook').item.json.body.session_id }}',\n  '{{ $('Webhook').item.json.body.lead_id }}',\n  'user',\n  '{{ $json.userMessage.replace(/'/g, \"''\") }}'\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -48,
+        -256
+      ],
+      "id": "bbf7b326-ebe7-4241-b2e2-d78b179d76e3",
+      "name": "Save User Message",
+      "credentials": {
+        "postgres": {
+          "id": "ziRrWRlzoqgzfMd4",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into conversations (session_id, lead_id, role, content)\nvalues (\n  '{{ $('Webhook').item.json.body.session_id }}',\n  '{{ $('Webhook').item.json.body.lead_id }}',\n  'assistant',\n  '{{ $json.text.replace(/'/g, \"''\") }}'\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        352,
+        192
+      ],
+      "id": "cf670592-724a-4e53-9ce0-eb0f936fc111",
+      "name": "Save Bot Reply",
+      "credentials": {
+        "postgres": {
+          "id": "ziRrWRlzoqgzfMd4",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Fetch history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Save User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Save Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch history": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save User Message": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Bot Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "69d95219-cd38-4047-bf40-840177e61fac",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a1f6449a0b3c1e587155d88102783d9a25d366c8e8a6daf2b8005631790520a1"
+  },
+  "nodeGroups": [],
+  "id": "h72ukdcPzDdpo3a9",
+  "tags": []
+}

@@ -1,0 +1,408 @@
+{
+  "name": "business_scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "testing",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "website_url"
+            },
+            {
+              "fieldLabel": "lead_id"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -224,
+        -32
+      ],
+      "id": "be132256-1d63-4dab-831e-43c221dd15f1",
+      "name": "On form submission",
+      "webhookId": "e877d6db-1dfd-4210-ada6-2083b33ac8da"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer fc-1f7bfa92fe7e4746a166ddb887937dd9"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"formats\": [\n    \"markdown\"\n  ],\n  \"onlyMainContent\": false,\n   \"waitFor\": 2500\n} ",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        112
+      ],
+      "id": "4c400f12-d0f3-4e05-9d64-790d1c82cd3c",
+      "name": "HTTP Request1",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('On form submission').first().json;\nconst MAX_PAGES = 10;\n\nfunction parse(raw) {\n  const m = String(raw).match(/^(https?):\\/\\/([^\\/?#]+)([^?#]*)/i);\n  if (!m) return null;\n  return {\n    protocol: m[1].toLowerCase(),\n    host: m[2].toLowerCase().replace(/^www\\./, ''),\n    path: m[3] || '/'\n  };\n}\n\n// turn any href (absolute or relative) into a full URL\nfunction resolve(href, base) {\n  href = String(href).trim();\n  if (!href || /^(#|mailto:|tel:|sms:|javascript:|data:|whatsapp:)/i.test(href)) return null;\n  if (/^https?:\\/\\//i.test(href)) return href;\n  if (href.startsWith('//')) return base.protocol + ':' + href;\n\n  const origin = base.protocol + '://' + base.host;\n  if (href.startsWith('/')) return origin + href;\n\n  // relative to the current folder, e.g. \"about.html\" or \"../about\"\n  const dir = base.path.replace(/[^\\/]*$/, '');\n  const parts = [];\n  for (const seg of (dir + href).split(/[?#]/)[0].split('/')) {\n    if (seg === '..') { if (parts.length > 1) parts.pop(); }\n    else if (seg !== '.') parts.push(seg);\n  }\n  return origin + parts.join('/');\n}\n\nconst site = parse(lead.website_url);\nif (!site) throw new Error('Invalid website_url: ' + lead.website_url);\n\nconst d = $input.first().json.data || $input.first().json;\nconst finalUrl = parse(d.metadata?.url || d.metadata?.sourceURL || lead.website_url) || site;\nconst hosts = new Set([site.host, finalUrl.host]);   // accept the redirected host too\n\n// merge links from Firecrawl AND from the markdown\nconst md = d.markdown || '';\nconst rawLinks = [\n  ...(d.links || []),\n  ...[...md.matchAll(/\\]\\(([^)\\s]+)\\)/g)].map(m => m[1])\n];\n\nconst junk = /(\\/(old|blogs?|news|gallery|portfolio|our-work|careers?|jobs|cart|login|checkout|account|wp-admin)(\\/|\\.|$))|privacy|terms|cookie|giving|charity|donat|sitemap|disclaimer/i;\nconst skipFile = /\\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js|ico|zip)$/i;\n\nconst keyOf = p => p\n  .replace(/\\/index\\.(html?|php)$/i, '/')\n  .replace(/\\.(html?|php)$/i, '')\n  .replace(/\\/+$/, '') || '/';\n\n// homepage is already scraped, so skip it\nconst seen = new Set([keyOf(site.path), keyOf(finalUrl.path), '/']);\nconst urls = [];\n\nfor (const raw of rawLinks) {\n  const full = resolve(raw, finalUrl);\n  if (!full) continue;\n  const u = parse(full);\n  if (!u || !hosts.has(u.host)) continue;          // same site only\n\n  if (junk.test(u.path) || skipFile.test(u.path)) continue;\n  const key = keyOf(u.path);\n  if (seen.has(key)) continue;\n  seen.add(key);\n\n  urls.push(u.protocol + '://' + u.host + u.path);\n}\n\n// safety net: no inner pages found -> keep the workflow running on the homepage\nif (!urls.length) {\n  return [{ json: { url: lead.website_url, lead_id: lead.lead_id, note: 'no inner links found' } }];\n}\n\nreturn urls.slice(0, MAX_PAGES).map(url => ({ json: { url, lead_id: lead.lead_id } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        64
+      ],
+      "id": "dc840d17-687a-4672-8716-3a62a71577ef",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer fc-1f7bfa92fe7e4746a166ddb887937dd9"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $json.website_url }}\",\n  \"formats\": [\n    \"markdown\",\n    \"links\"\n  ],\n  \"onlyMainContent\": false,\n   \"waitFor\": 2500,\n  \"maxAge\": 0\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        16,
+        64
+      ],
+      "id": "8e5dec65-bd4f-4d55-a220-a8afc4a16525",
+      "name": "Scrape Homepage"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You extract business info from website text for a local home services company. Return ONLY valid JSON, with no explanation and no markdown fences.\n\nRules:\n- Use ONLY what is written in the text. Never guess or infer.\n- If something is not stated, use null (or an empty list for lists).\n- Copy working hours exactly as written on the site.\n- Ignore navigation menus, customer reviews, social media widgets, translate widgets, and the website designer's footer.\n\n- For each service \"description\": if the text gives no details about that service, use null. Do not write generic filler.\n- \"languages\": only include languages the business says it speaks. Ignore language selector or translate widgets.\n\n- \"phone\": one main phone number only. Put any other numbers in \"other_phones\".\n- \"addresses\": a list with one entry per physical office address on the site.\n- If the site gives different numbers for the same thing (for example two different financing limits or interest rates), never combine them. Use the value from the FAQ or contact page, or use null.\n- For prices and financing, copy only what a single sentence on the site says.\n\n- \"service_areas\": only cities or regions the site says it serves, taken from an areas or service-area section.\n- \"years_in_business\": only if the site states how long the company has been operating. Do not use \"combined experience\" figures.\n- \"business_name\": the legal name shown in the site footer or About page.\n\nJSON schema:\n{\n  \"business_name\": \"\",\n  \"owner_name\": \"\",\n  \"phone\": \"\",\n  \"other_phones\": [],\n  \"email\": \"\",\n  \"addresses\": [],\n  \"working_hours\": \"\",\n  \"service_areas\": [],\n  \"languages\": [],\n  \"years_in_business\": \"\",\n  \"preferred_contact\": \"\",\n  \"pricing_info\": \"\",\n  \"services\": [\n    { \"name\": \"\", \"description\": \"1-2 sentences using only site info\" }\n  ],\n  \"short_summary\": \"2 sentences about the business, from the site only\"\n}\n\nWEBSITE TEXT:\n{{ $json.website_text }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        880,
+        192
+      ],
+      "id": "be47c802-6b5e-4ed5-abc7-89ae56b00d05",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('build text').first().json;   // lead_id, website_url, website_text\nlet raw = $input.first().json.output || '';\n\n// strip ```json fences if the model added them\nraw = raw.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n\nlet info;\ntry {\n  info = JSON.parse(raw);\n} catch (e) {\n  throw new Error('LLM did not return valid JSON: ' + raw.slice(0, 300));\n}\n\nreturn [{\n  json: {\n    lead_id: base.lead_id,\n    website_url: base.website_url,\n    info,                          // the clean structured data\n    website_text: base.website_text\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        192
+      ],
+      "id": "3d98608a-23d1-4d74-9923-1ec08b7fbacf",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('On form submission').first().json;   // change the name if yours differs\n\nfunction clean(md) {\n  let t = (md || '');\n\n  // cut the reviews block (only if both markers exist)\n  t = t.replace(/What Our Customers Say[\\s\\S]*?write a review[^\\n]*/gi, '');\n\n  return t\n    .replace(/!\\[[^\\]]*\\]\\([^)]*\\)/g, '')       // images\n    .replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1')    // links -> just the text\n    .replace(/\\*\\*/g, '');                      // bold markers\n}\n\n// homepage first, then the scraped pages (skip any that errored)\nconst home = $('Scrape Homepage').first().json;\nconst pages = [home, ...$input.all().map(i => i.json)]\n  .map(j => j.data || j)\n  .filter(d => d && d.markdown)\n  .map(d => ({\n    url: d.metadata?.url || d.metadata?.sourceURL || 'unknown',\n    markdown: d.markdown,\n    description: d.metadata?.description || ''\n  }));\n\nconst seen = new Set();\nconst blocks = [];\n\nfor (const p of pages) {\n  const kept = clean(p.markdown)\n    .split('\\n')\n    .map(l => l.trim())\n    .filter(l => l && l !== '* * *')\n    .filter(l => {\n      if (seen.has(l)) return false;   // repeated nav/footer/widget lines\n      seen.add(l);\n      return true;\n    });\n\n  blocks.push(`## PAGE: ${p.url}\\n` + kept.join('\\n'));\n}\n\nconst website_text = blocks.join('\\n\\n');\nconst before = pages.reduce((n, p) => n + p.markdown.length, 0);\n\nreturn [{\n  json: {\n    lead_id: lead.lead_id,\n    website_url: lead.website_url,\n    website_text,\n    pages_count: pages.length,\n    chars_before: before,\n    chars_after: website_text.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        192
+      ],
+      "id": "7430c305-9efc-47d9-baeb-5e1d676c858f",
+      "name": "build text"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        400
+      ],
+      "id": "fb2ae714-daa7-4587-b632-5230c802ddaa",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;   // { lead_id, website_url, info, website_text }\nconst { lead_id, website_url, info } = item;\n\nconst chunks = [];\n\nchunks.push({\n  content: `Business: ${info.business_name || 'Unknown'}. ${info.short_summary || ''}`,\n  type: 'summary'\n});\n\nchunks.push({\n  content: [\n    `Business name: ${info.business_name || 'N/A'}`,\n    `Owner: ${info.owner_name || 'N/A'}`,\n    `Phone: ${info.phone || 'N/A'}`,\n    info.other_phones?.length ? `Other phones: ${info.other_phones.join(', ')}` : null,\n    `Email: ${info.email || 'N/A'}`,\n    info.addresses?.length ? `Address(es): ${info.addresses.join(' | ')}` : null,\n    `Working hours: ${info.working_hours || 'Not listed'}`,\n    info.service_areas?.length ? `Service areas: ${info.service_areas.join(', ')}` : null,\n    info.languages?.length ? `Languages: ${info.languages.join(', ')}` : null,\n    info.years_in_business ? `Years in business: ${info.years_in_business}` : null,\n    info.preferred_contact ? `Preferred contact: ${info.preferred_contact}` : null,\n    info.pricing_info ? `Pricing: ${info.pricing_info}` : null\n  ].filter(Boolean).join('\\n'),\n  type: 'basic_info'\n});\n\nfor (const s of (info.services || [])) {\n  chunks.push({\n    content: `Service: ${s.name}. ${s.description || 'No further details available.'}`,\n    type: 'service'\n  });\n}\n\nreturn chunks.map(c => ({\n  json: {\n    pageContent: c.content,\n    metadata: { lead_id, website_url, type: c.type }\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        192
+      ],
+      "id": "54b74a0d-8ef9-4e0f-b3ed-dc669799d4ca",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "embeddingBatchSize": 1,
+        "options": {}
+      },
+      "id": "0eee2bf6-879e-4057-b0d7-97ae574380c4",
+      "name": "Supabase Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1920,
+        128
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "UYJmwzKOnHW48MNM",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "6eb3db0f-5e19-4e9e-8cc3-2d64c0761bc7",
+      "name": "Embeddings Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1744,
+        384
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aW7bdezkk57sGxyj",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.pageContent }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "metadata",
+                "value": "={{ $json.metadata}}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "6da78ecd-4b70-470f-ab5c-558ac0806034",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1984,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "separator": "\n\n",
+        "chunkOverlap": 100
+      },
+      "id": "5feff793-0bc3-439a-9557-7d58018e127e",
+      "name": "Character Text Splitter1",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        656
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Scrape Homepage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "build text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Homepage": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build text": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Character Text Splitter1": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b15f33a5-de3d-4bd3-a10c-cf3d50d425ac",
+  "meta": {
+    "instanceId": "a1f6449a0b3c1e587155d88102783d9a25d366c8e8a6daf2b8005631790520a1"
+  },
+  "nodeGroups": [],
+  "id": "lV8uJ1SDeYCgVVHl",
+  "tags": []
+}
